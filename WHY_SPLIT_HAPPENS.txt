@@ -1,0 +1,238 @@
+╔═══════════════════════════════════════════════════════════════════════════╗
+║              WHY DOES SPLIT HAPPEN OR NOT HAPPEN?                         ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+QUESTION: Why do we see 900 and 900? Why is it not split differently?
+
+═══════════════════════════════════════════════════════════════════════════
+ANSWER: IT DEPENDS ON THE CONTEXT
+═══════════════════════════════════════════════════════════════════════════
+
+There are THREE different values being tracked:
+
+1. EXPENSE AMOUNT
+   └─ Total amount to split
+   └─ In console output: The original 900
+
+2. SHARE RECORDS (What each person owes)
+   └─ Individual shares after splitting
+   └─ In console output: A=300, B=300, C=300
+
+3. BALANCE DELTAS (Net change per person)
+   └─ Difference between what they paid vs what they owe
+   └─ In console output: A=+600, B=-300, C=-300
+
+═══════════════════════════════════════════════════════════════════════════
+SCENARIO 1: SINGLE PAYER (A pays all ₹900)
+═══════════════════════════════════════════════════════════════════════════
+
+Input:
+  Total Amount: 900
+  Paid By: A (900)
+  Members: A, B, C
+  Split Type: EQUAL_SPLIT
+
+WHY IT SPLITS:
+  ✓ Multiple members (A, B, C = 3 people)
+  ✓ One person paid the full amount
+  ✓ Need to divide equally
+
+Output:
+  Share Records:
+    A = 300 (owes 300 out of 900)
+    B = 300 (owes 300 out of 900)
+    C = 300 (owes 300 out of 900)
+  
+  Balance Deltas:
+    A = +600 (paid 900, owes 300)
+    B = -300 (paid 0, owes 300)
+    C = -300 (paid 0, owes 300)
+
+═══════════════════════════════════════════════════════════════════════════
+SCENARIO 2: MULTIPLE PAYERS (A=100, B=500, C=600 totaling 1200)
+═══════════════════════════════════════════════════════════════════════════
+
+Input:
+  Total Amount: 1200
+  Paid By: A (100) + B (500) + C (600)
+  Members: A, B, C
+  Split Type: EQUAL_SPLIT
+
+WHY IT SPLITS DIFFERENTLY:
+  ✓ Multiple members
+  ✓ Multiple people paid different amounts
+  ✓ System calculates fair share
+
+Output:
+  Share Records:
+    A = 400 (owes 400 out of 1200)
+    B = 400 (owes 400 out of 1200)
+    C = 400 (owes 400 out of 1200)
+  
+  Balance Deltas:
+    A = -300 (paid 100, owes 400, net = -300)
+    B = +100 (paid 500, owes 400, net = +100)
+    C = +200 (paid 600, owes 400, net = +200)
+
+═══════════════════════════════════════════════════════════════════════════
+WHY YOU SEE 900 AND 900
+═══════════════════════════════════════════════════════════════════════════
+
+Possibility 1: Two Different Values
+  First 900  = Original Expense Amount
+  Second 900 = Total of Share Records (300+300+300 = 900)
+  
+  They match because the split totals equal the original amount ✓
+
+Possibility 2: Confusion Between Views
+  Console might show:
+    - 900 (the input amount being split)
+    - 900 (verification that splits add up)
+  
+  This is CORRECT - they should match!
+
+═══════════════════════════════════════════════════════════════════════════
+WHEN SPLITS DON'T HAPPEN (Or Appear Not To)
+═══════════════════════════════════════════════════════════════════════════
+
+Case 1: ONLY ONE MEMBER
+  Input: { amount: 900, members: [A] }
+  
+  WHY: Can't split among 1 person
+  Output: A = 900 (whole amount)
+  Balance: A = 0 (paid 900, owes 900, net = 0)
+  RESULT: No split needed ✗
+
+Case 2: NO MEMBERS PROVIDED
+  Input: { amount: 900, members: [] }
+  
+  WHY: No one to split among
+  Output: (empty)
+  RESULT: Error or empty splits ✗
+
+Case 3: CUSTOM_SPLIT WITH EXACT AMOUNTS
+  Input: { 
+    amount: 900, 
+    splitType: "CUSTOM_SPLIT",
+    expenseData: [
+      { user_id: "A", amount: 900 }
+    ]
+  }
+  
+  WHY: Explicitly set to give all to A
+  Output: A = 900 (as specified)
+  RESULT: No division, follows custom input ✗
+
+═══════════════════════════════════════════════════════════════════════════
+VERIFICATION: TOTAL ALWAYS EQUALS ORIGINAL
+═══════════════════════════════════════════════════════════════════════════
+
+Rule: Sum of Share Records = Original Expense Amount
+
+Example 1: ₹900 split equally
+  A = 300
+  B = 300
+  C = 300
+  Total = 300 + 300 + 300 = 900 ✓
+
+Example 2: ₹1200 split equally
+  A = 400
+  B = 400
+  C = 400
+  Total = 400 + 400 + 400 = 1200 ✓
+
+Example 3: ₹1000 custom split
+  A = 600
+  B = 250
+  C = 150
+  Total = 600 + 250 + 150 = 1000 ✓
+
+WHY: No money is created or destroyed in split
+  Input amount = Output amount ✓
+
+═══════════════════════════════════════════════════════════════════════════
+FLOW DIAGRAM: WHEN DOES SPLIT HAPPEN?
+═══════════════════════════════════════════════════════════════════════════
+
+START: Expense amount provided
+  ↓
+Check: Split Type?
+  ├─ EQUAL_SPLIT?
+  │   ├─ Check: Members > 1?
+  │   │   ├─ YES: Divide amount by number of members ✓
+  │   │   └─ NO: Keep as is ✗
+  │   └─ Splits: A=amount/n, B=amount/n, C=amount/n
+  │
+  └─ CUSTOM_SPLIT?
+      ├─ Check: Uses percentages or exact amounts?
+      │   ├─ Percentages: Multiply amount by each %
+      │   └─ Exact amounts: Use as specified
+      └─ Splits: Follow custom distribution
+
+END: Return calculated splits
+
+═══════════════════════════════════════════════════════════════════════════
+KEY POINTS TO REMEMBER
+═══════════════════════════════════════════════════════════════════════════
+
+1. SPLIT HAPPENS AUTOMATICALLY FOR EQUAL_SPLIT
+   When: Multiple members + EQUAL_SPLIT type
+   Result: Amount ÷ Members = Each person's share
+
+2. SPLITS ARE VERIFIED
+   Sum of all shares must equal original amount
+   If 900 ÷ 3 = 300 each, then 300+300+300 = 900 ✓
+
+3. BALANCE IS SEPARATE FROM SPLITS
+   Splits = What people owe
+   Balance = What people paid vs owe (difference)
+
+4. TWO 900s MEAN DIFFERENT THINGS
+   Input 900 = Total expense amount
+   Output 900 = Verification (sum of splits)
+   Both being equal is CORRECT ✓
+
+═══════════════════════════════════════════════════════════════════════════
+EXAMPLE WITH STEP-BY-STEP CLARIFICATION
+═══════════════════════════════════════════════════════════════════════════
+
+Question: Why do we see 900 twice?
+
+Answer:
+  First 900:
+    └─ This is the INPUT
+    └─ "We have ₹900 to split"
+    └─ Source: User provides this amount
+  
+  Second 900:
+    └─ This is the VERIFICATION
+    └─ "Splits add up to ₹900"
+    └─ Calculation: 300 + 300 + 300 = 900
+  
+  They're the same number because NO money is lost in splitting!
+  
+  What actually CHANGES:
+    Original: One person has 900
+    After split: Three people each owe 300
+    Total: Still 900, just distributed
+
+═══════════════════════════════════════════════════════════════════════════
+CONCLUSION
+═══════════════════════════════════════════════════════════════════════════
+
+✓ Split ALWAYS happens when:
+  - Multiple members exist
+  - EQUAL_SPLIT type is used
+  - Each gets: amount ÷ number of members
+
+✓ Split does NOT happen when:
+  - Only 1 member
+  - No members provided
+  - Custom split explicitly defined otherwise
+
+✓ The two 900s are:
+  1. Input amount (what user provides)
+  2. Output verification (sum of splits)
+  They match because the math is correct!
+
+═══════════════════════════════════════════════════════════════════════════

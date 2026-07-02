@@ -1,0 +1,209 @@
+╔═══════════════════════════════════════════════════════════════════════════╗
+║           AUTOMATIC SPLIT FEATURE - CODE BREAKDOWN (₹1200)                ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+FILE: src/controllers/Expense/expense.logic.ts
+
+═══════════════════════════════════════════════════════════════════════════
+HOW AUTOMATIC SPLIT WORKS FOR ₹1200
+═══════════════════════════════════════════════════════════════════════════
+
+INPUT DATA:
+  amount = 1200
+  splitType = "EQUAL_SPLIT"
+  paidByData = [
+    { user_id: "A", amount: 100 },
+    { user_id: "B", amount: 500 },
+    { user_id: "C", amount: 600 }
+  ]
+  groupMembers = [
+    { user_id: "A" },
+    { user_id: "B" },
+    { user_id: "C" }
+  ]
+
+═══════════════════════════════════════════════════════════════════════════
+STEP 1: INITIALIZE
+═══════════════════════════════════════════════════════════════════════════
+
+  const amountDecimal = toDecimal(1200);        // Convert to Decimal
+  const balanceDeltas = new Map();               // Track balance changes
+  const shareRecords = [];                       // Track splits
+  const paymentRecords = [];                     // Track payments
+
+═══════════════════════════════════════════════════════════════════════════
+STEP 2: PROCESS PAYERS (Track who paid)
+═══════════════════════════════════════════════════════════════════════════
+
+  Loop through paidByData:
+  
+  Iteration 1: A paid 100
+    → addDelta(balanceDeltas, "A", 100)
+    → balanceDeltas["A"] = 100
+    
+  Iteration 2: B paid 500
+    → addDelta(balanceDeltas, "B", 500)
+    → balanceDeltas["B"] = 500
+    
+  Iteration 3: C paid 600
+    → addDelta(balanceDeltas, "C", 600)
+    → balanceDeltas["C"] = 600
+
+  Result: balanceDeltas = { A: 100, B: 500, C: 600 }
+
+═══════════════════════════════════════════════════════════════════════════
+STEP 3: EQUAL SPLIT CALCULATION
+═══════════════════════════════════════════════════════════════════════════
+
+  Check: if (splitType === "EQUAL_SPLIT") ✓
+
+  Get member IDs:
+    memberIds = ["A", "B", "C"]
+    
+  Calculate equal share:
+    shareAmount = 1200 ÷ 3 = 400
+    remaining = 1200
+    
+  Loop through members:
+  
+    Iteration 1: userId = "A", index = 0
+      isLast = false
+      exactAmount = 400
+      remaining = 1200 - 400 = 800
+      
+      → addDelta(balanceDeltas, "A", -400)
+      → balanceDeltas["A"] = 100 - 400 = -300
+      
+      → shareRecords.push({
+          user_id: "A",
+          amount: 400,
+          percentage: (400 ÷ 1200) × 100 = 33.33%
+        })
+    
+    Iteration 2: userId = "B", index = 1
+      isLast = false
+      exactAmount = 400
+      remaining = 800 - 400 = 400
+      
+      → addDelta(balanceDeltas, "B", -400)
+      → balanceDeltas["B"] = 500 - 400 = 100
+      
+      → shareRecords.push({
+          user_id: "B",
+          amount: 400,
+          percentage: 33.33%
+        })
+    
+    Iteration 3: userId = "C", index = 2
+      isLast = true (last iteration)
+      exactAmount = remaining = 400
+      remaining = 400 - 400 = 0
+      
+      → addDelta(balanceDeltas, "C", -400)
+      → balanceDeltas["C"] = 600 - 400 = 200
+      
+      → shareRecords.push({
+          user_id: "C",
+          amount: 400,
+          percentage: 33.33%
+        })
+
+═══════════════════════════════════════════════════════════════════════════
+FINAL RESULTS
+═══════════════════════════════════════════════════════════════════════════
+
+  SHARE RECORDS (What each person owes):
+    A: ₹400 (33.33%)
+    B: ₹400 (33.33%)
+    C: ₹400 (33.33%)
+
+  BALANCE DELTAS (Net change for each person):
+    A: -₹300 (paid 100, owes 400, net = 100 - 400 = -300)
+    B: +₹100 (paid 500, owes 400, net = 500 - 400 = +100)
+    C: +₹200 (paid 600, owes 400, net = 600 - 400 = +200)
+
+═══════════════════════════════════════════════════════════════════════════
+KEY CODE SECTIONS
+═══════════════════════════════════════════════════════════════════════════
+
+1. EQUAL SPLIT DETECTION:
+   if (splitType === "EQUAL_SPLIT") {
+     // Automatic division logic
+   }
+
+2. SHARE CALCULATION:
+   const shareAmount = amountDecimal.div(memberIds.length);
+   // Divides total by number of members
+
+3. REMAINING BALANCE HANDLING:
+   const isLast = index === memberIds.length - 1;
+   const exactAmount = isLast ? remaining : shareAmount;
+   // Last person gets exact remaining to avoid rounding errors
+
+4. BALANCE DELTA COMPUTATION:
+   addDelta(balanceDeltas, userId, exactAmount.neg());
+   // Subtracts share from paid amount
+
+═══════════════════════════════════════════════════════════════════════════
+AUTOMATIC FEATURES
+═══════════════════════════════════════════════════════════════════════════
+
+✓ Automatic Equal Division
+  - Divides amount by number of members
+  - Handles rounding on last member
+
+✓ Automatic Payment Tracking
+  - Tracks what each person paid
+  - Converts to Decimal for precision
+
+✓ Automatic Balance Calculation
+  - Calculates net balance per person
+  - Paid - Owed = Net Balance
+
+✓ Automatic Percentage Calculation
+  - Calculates each person's share percentage
+  - (Amount ÷ Total) × 100
+
+✓ Automatic Settlement Determination
+  - Positive balance = person is owed
+  - Negative balance = person owes
+  - Zero balance = settled
+
+═══════════════════════════════════════════════════════════════════════════
+PRECISION HANDLING
+═══════════════════════════════════════════════════════════════════════════
+
+Use of Prisma.Decimal:
+  - Prevents floating-point errors
+  - Maintains exact precision
+  - Example: 1200 ÷ 3 = exactly 400.0 (not 399.9999...)
+
+Rounding Safety:
+  - Last member gets exact remaining amount
+  - Ensures total always equals original amount
+  - No money lost due to rounding
+
+═══════════════════════════════════════════════════════════════════════════
+FLOW DIAGRAM
+═══════════════════════════════════════════════════════════════════════════
+
+Input (1200, A/B/C paid amounts)
+         ↓
+  Initialize Maps
+         ↓
+  Track Payers (add to balance)
+         ↓
+  Check Split Type = EQUAL_SPLIT ✓
+         ↓
+  Calculate shareAmount = 1200 ÷ 3 = 400
+         ↓
+  Loop through members
+  ├─ A: remaining -= 400, delta = -400
+  ├─ B: remaining -= 400, delta = -400
+  └─ C: remaining = 0, delta = -400
+         ↓
+  Final Deltas: A=-300, B=+100, C=+200
+         ↓
+  Return shareRecords + balanceDeltas
+
+═══════════════════════════════════════════════════════════════════════════

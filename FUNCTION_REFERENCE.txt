@@ -1,0 +1,203 @@
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                    EXPENSE LOGIC - FUNCTION REFERENCE                     ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+FILE: src/controllers/Expense/expense.logic.ts
+
+═══════════════════════════════════════════════════════════════════════════
+1. buildExpenseSplitPlan()
+═══════════════════════════════════════════════════════════════════════════
+
+DEFINITION:
+  function buildExpenseSplitPlan(input: ExpenseSplitInput): ExpenseSplitPlan
+
+PURPOSE:
+  Calculates how an expense should be split among group members and 
+  determines balance changes for each user.
+
+INPUT PARAMETERS:
+  {
+    amount: number | string | Decimal        // Total expense amount
+    splitType: "EQUAL_SPLIT" | "CUSTOM_SPLIT" // How to divide
+    paidByData: Array<{                       // Who paid and how much
+      user_id: string
+      amount: number | string | Decimal
+    }>
+    expenseData?: Array<{                     // How to split (optional)
+      user_id: string
+      amount?: number | string | Decimal
+      percentage?: number | string | Decimal
+    }>
+    groupMembers?: Array<{ user_id: string }> // Group members list
+  }
+
+RETURNS:
+  {
+    shareRecords: Array<{                     // What each person owes
+      user_id: string
+      amount: Decimal
+      own_by: string
+      percentage: Decimal
+      exact_amount: Decimal
+    }>
+    paymentRecords: Array<...>                // Who paid what
+    balanceDeltas: Map<userId, Decimal>       // Balance changes
+  }
+
+USAGE EXAMPLE:
+  const plan = buildExpenseSplitPlan({
+    amount: 900,
+    splitType: "EQUAL_SPLIT",
+    paidByData: [{ user_id: "A", amount: 900 }],
+    groupMembers: [{ user_id: "A" }, { user_id: "B" }, { user_id: "C" }]
+  });
+
+═══════════════════════════════════════════════════════════════════════════
+2. buildReverseBalanceDeltas()
+═══════════════════════════════════════════════════════════════════════════
+
+DEFINITION:
+  function buildReverseBalanceDeltas(input: {
+    expenseAmount: number | string | Decimal
+    expensePaidBy: string
+    expenseSplits: Array<{
+      user_id: string
+      amount: number | string | Decimal
+      percentage?: number | string | Decimal
+    }>
+  }): Map<string, Decimal>
+
+PURPOSE:
+  Reverses the balance impact of an expense when it's deleted.
+  Calculates the opposite deltas to undo the original expense.
+
+INPUT PARAMETERS:
+  {
+    expenseAmount: number | string | Decimal  // Original expense total
+    expensePaidBy: string                      // Original payer user ID
+    expenseSplits: Array<{                     // Original split records
+      user_id: string
+      amount: number | string | Decimal
+      percentage?: number | string | Decimal
+    }>
+  }
+
+RETURNS:
+  Map<userId, Decimal>                        // Reverse balance changes
+
+USAGE EXAMPLE:
+  const reverseDeltas = buildReverseBalanceDeltas({
+    expenseAmount: 900,
+    expensePaidBy: "A",
+    expenseSplits: [
+      { user_id: "A", amount: 300 },
+      { user_id: "B", amount: 300 },
+      { user_id: "C", amount: 300 }
+    ]
+  });
+
+═══════════════════════════════════════════════════════════════════════════
+3. toDecimal() [Internal Helper]
+═══════════════════════════════════════════════════════════════════════════
+
+DEFINITION:
+  function toDecimal(value: number | string | Decimal): Decimal
+
+PURPOSE:
+  Converts any numeric value to Prisma Decimal for precise calculations.
+  Prevents floating-point precision errors.
+
+INPUT:
+  value: number | string | Decimal
+
+RETURNS:
+  Decimal
+
+USAGE EXAMPLE:
+  const amount = toDecimal(900);      // ₹900 as Decimal
+  const rate = toDecimal("0.15");     // 0.15 as Decimal
+  const existing = toDecimal(decimal); // Already Decimal, just converts
+
+═══════════════════════════════════════════════════════════════════════════
+4. addDelta() [Internal Helper]
+═══════════════════════════════════════════════════════════════════════════
+
+DEFINITION:
+  function addDelta(
+    deltas: Map<string, Decimal>,
+    userId: string,
+    delta: Decimal
+  ): void
+
+PURPOSE:
+  Accumulates balance changes for a user in the deltas map.
+  If user already has a delta, adds to it; otherwise creates new entry.
+
+INPUT PARAMETERS:
+  deltas: Map<string, Decimal>  // Balance changes map
+  userId: string                // User identifier
+  delta: Decimal                // Amount to add to balance
+
+USAGE EXAMPLE:
+  const deltas = new Map();
+  addDelta(deltas, "A", new Decimal(600));   // A gets +600
+  addDelta(deltas, "B", new Decimal(-300));  // B gets -300
+
+═══════════════════════════════════════════════════════════════════════════
+TYPE DEFINITIONS
+═══════════════════════════════════════════════════════════════════════════
+
+ExpenseSplitInput:
+  Defines what data is needed to calculate an expense split
+
+ExpenseSplitPlan:
+  Defines what comes back after calculating splits:
+  - shareRecords: Who owes what
+  - paymentRecords: Who paid
+  - balanceDeltas: Net balance changes
+
+═══════════════════════════════════════════════════════════════════════════
+SPLIT TYPES EXPLAINED
+═══════════════════════════════════════════════════════════════════════════
+
+EQUAL_SPLIT:
+  - Divides total amount equally among all group members
+  - Uses groupMembers list for calculation
+  - Example: ₹900 ÷ 3 members = ₹300 each
+
+CUSTOM_SPLIT:
+  - Divides based on exact amounts or percentages
+  - Uses expenseData for distribution
+  - Can use amounts: { user_id: "A", amount: 600 }
+  - Can use percentages: { user_id: "B", percentage: 25 }
+
+═══════════════════════════════════════════════════════════════════════════
+BALANCE LOGIC
+═══════════════════════════════════════════════════════════════════════════
+
+Formula: Balance Delta = Amount Paid - Amount Owed
+
+Positive (+): User is OWED money (creditor)
+Negative (-): User OWES money (debtor)
+Zero (0):    User is SETTLED (no debt)
+
+Example:
+  User A paid ₹900, owes ₹300 → Balance = +₹600 (is owed)
+  User B paid ₹0, owes ₹300 → Balance = -₹300 (owes)
+  User C paid ₹0, owes ₹300 → Balance = -₹300 (owes)
+
+═══════════════════════════════════════════════════════════════════════════
+WHERE FUNCTIONS ARE CALLED
+═══════════════════════════════════════════════════════════════════════════
+
+buildExpenseSplitPlan():
+  Called in: src/controllers/Expense/expense.controller.ts
+  Method: createExpense()
+  When: Creating a new expense
+
+buildReverseBalanceDeltas():
+  Called in: src/controllers/Expense/expense.controller.ts
+  Method: deleteExpense()
+  When: Deleting an expense to reverse its impact
+
+═══════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,242 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User Schema
+
+model users {
+  id                    String   @id @default(cuid())
+  email                 String   @unique
+  password              String
+  displayName           String   @unique
+  avatarUrl             String
+  mobileNumber          String   @unique
+  social_login_provider String
+  contact_list          Json?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  // soft delete
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+
+  // Relationships
+  createdGroups groups[]         @relation("UserCreatedGroups")
+  groupmembers  group_members[]  @relation("userName")
+  reports       reports[]        @relation("userReport")
+  settlements   settlements[]    @relation("fromUser")
+  tosettlements settlements[]    @relation("toUser")
+  expenses      expenses[]       @relation("userExpeness")
+  paidExpenses  expenses[]       @relation("paidExpeness")
+  userBalances  balances[]       @relation("userBalances")
+  splitUserId   expense_splits[] @relation("splitUser")
+  splitOwner    expense_splits[] @relation("splitOwner")
+}
+
+// Group Schema
+
+enum groupType {
+  EQUAL_SPLIT
+  CUSTOM_SPLIT
+}
+
+model groups {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  description String?
+  avatarUrl   String
+  groupType   groupType @default(EQUAL_SPLIT)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdBy   String
+
+  // soft delete
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+
+  // Relationships
+  creator       users           @relation("UserCreatedGroups", fields: [createdBy], references: [id])
+  member        group_members[] @relation("groupName")
+  reports       reports[]       @relation("groupReport")
+  settlements   settlements[]   @relation("groupSettlement")
+  expenses      expenses[]      @relation("groupExpeness")
+  groupBalances balances[]      @relation("groupBalances")
+}
+
+// Group Member Schema
+
+enum groupRole {
+  ADMIN
+  MEMBER
+}
+
+model group_members {
+  id        String    @id @default(cuid())
+  role      groupRole @default(MEMBER)
+  joined_at DateTime  @default(now())
+  group_id  String
+  user_id   String
+  isInGroup Boolean   @default(true)
+  left_at   DateTime?
+
+  // Relationships
+  user  users  @relation("userName", fields: [user_id], references: [id])
+  group groups @relation("groupName", fields: [group_id], references: [id])
+
+  @@unique([user_id, group_id])
+}
+
+// Reports Schema
+
+enum ReportType {
+  SPENDING_BREAKDOWN
+  SUMMARY
+}
+
+model reports {
+  id           String     @id @default(cuid())
+  report_type  ReportType @default(SUMMARY)
+  period_start DateTime
+  period_end   DateTime
+  data         Json
+  createdAt    DateTime   @default(now())
+  group_id     String
+  user_id      String
+
+  // Relationships
+  user  users  @relation("userReport", fields: [user_id], references: [id])
+  group groups @relation("groupReport", fields: [group_id], references: [id])
+}
+
+// Currencies
+
+model currencies {
+  code   String @id @default(cuid())
+  name   String @default("INR")
+  symbol String @default("₹")
+
+  // Relationships
+  fromCurrency exchange_rates[] @relation("fromCurrency")
+  toCurrency   exchange_rates[] @relation("toCurrency")
+  expenses     expenses[]       @relation("currencyExpeness")
+  balance      balances[]       @relation("currencyCode")
+
+  @@unique([name, code])
+}
+
+// Exchange Rates
+
+model exchange_rates {
+  id            String   @id @default(cuid())
+  from_currency String
+  to_currency   String
+  rate_date     DateTime
+
+  fromCurrency currencies @relation("fromCurrency", fields: [from_currency], references: [code])
+  toCurrency   currencies @relation("toCurrency", fields: [to_currency], references: [code])
+}
+
+// Settlements
+
+enum SettlementStatus {
+  SUCUSS
+  IN_PROGRESS
+  FAILED
+}
+
+enum PaymentMethod {
+  CASH
+  BANK
+  ONLINE
+}
+
+model settlements {
+  id            String           @id @default(cuid())
+  amount        Decimal
+  status        SettlementStatus @default(IN_PROGRESS)
+  method        PaymentMethod    @default(ONLINE)
+  settled_at    DateTime
+  created_at    DateTime         @default(now())
+  currency_code String
+  from_user_id  String
+  to_user_id    String
+  group_id      String
+
+  // Relationships
+  fromUser users  @relation("fromUser", fields: [from_user_id], references: [id])
+  toUser   users  @relation("toUser", fields: [to_user_id], references: [id])
+  group    groups @relation("groupSettlement", fields: [group_id], references: [id])
+}
+
+// Expenses
+
+enum splitType {
+  EQUAL_SPLIT
+  CUSTOM_SPLIT
+}
+
+model expenses {
+  id            String    @id @default(cuid())
+  group_id      String
+  created_by    String
+  paid_by       String
+  amount        Decimal
+  description   String
+  category      String
+  expense_data  DateTime
+  split_type    splitType @default(EQUAL_SPLIT)
+  currency_code String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relationships
+  group        groups           @relation("groupExpeness", fields: [group_id], references: [id])
+  user         users            @relation("userExpeness", fields: [created_by], references: [id])
+  paid         users            @relation("paidExpeness", fields: [paid_by], references: [id])
+  currency     currencies       @relation("currencyExpeness", fields: [currency_code], references: [code])
+  splitExpense expense_splits[] @relation("splitExpense")
+}
+
+// Balances
+
+model balances {
+  id            String   @id @default(cuid())
+  balance       Decimal
+  last_update   DateTime
+  group_id      String
+  user_id       String
+  currency_code String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  groupBalances groups     @relation("groupBalances", fields: [group_id], references: [id])
+  userBalances  users      @relation("userBalances", fields: [user_id], references: [id])
+  currency      currencies @relation("currencyCode", fields: [currency_code], references: [code])
+
+  @@unique([user_id, group_id])
+}
+
+// Expense Splits
+
+model expense_splits {
+  id           String  @id() @default(cuid())
+  user_id      String
+  own_by       String
+  amount       Decimal
+  percentage   Decimal
+  expense_id   String
+  exact_amount Decimal
+
+  // Relationships
+  splitUserId users    @relation("splitUser", fields: [user_id], references: [id])
+  splitOwner  users    @relation("splitOwner", fields: [own_by], references: [id])
+  expenseId   expenses @relation("splitExpense", fields: [expense_id], references: [id])
+}

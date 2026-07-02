@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Paratapay - Expense Split Calculator</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            color: white;
+            margin-bottom: 40px;
+        }
+
+        header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            margin-bottom: 20px;
+        }
+
+        .form-section {
+            margin-bottom: 30px;
+        }
+
+        .form-section h2 {
+            color: #333;
+            font-size: 1.3em;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 500;
+        }
+
+        input[type="number"],
+        input[type="text"],
+        select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+
+        input[type="number"]:focus,
+        input[type="text"]:focus,
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .payer-entry {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border-left: 4px solid #667eea;
+        }
+
+        .payer-entry input {
+            margin-bottom: 10px;
+        }
+
+        .payer-entry input:last-child {
+            margin-bottom: 0;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 1em;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+            flex: 1;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #e0e0e0;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #d0d0d0;
+        }
+
+        .btn-add {
+            background: #4caf50;
+            color: white;
+            padding: 8px 16px;
+            font-size: 0.9em;
+        }
+
+        .btn-add:hover {
+            background: #45a049;
+        }
+
+        .btn-remove {
+            background: #f44336;
+            color: white;
+            padding: 8px 16px;
+            font-size: 0.9em;
+        }
+
+        .btn-remove:hover {
+            background: #da190b;
+        }
+
+        .results {
+            display: none;
+        }
+
+        .results.show {
+            display: block;
+        }
+
+        .result-section {
+            margin-bottom: 25px;
+        }
+
+        .result-section h3 {
+            color: #667eea;
+            font-size: 1.1em;
+            margin-bottom: 15px;
+        }
+
+        .share-card {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-left: 4px solid #667eea;
+        }
+
+        .share-card.positive {
+            border-left-color: #4caf50;
+        }
+
+        .share-card.negative {
+            border-left-color: #f44336;
+        }
+
+        .share-name {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .share-amount {
+            font-size: 1.2em;
+            font-weight: 700;
+        }
+
+        .amount-positive {
+            color: #4caf50;
+        }
+
+        .amount-negative {
+            color: #f44336;
+        }
+
+        .settlement-card {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+
+        .settlement-card strong {
+            color: #856404;
+        }
+
+        .summary {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            color: #1565c0;
+        }
+
+        .summary-row:last-child {
+            margin-bottom: 0;
+            border-top: 1px solid #2196f3;
+            padding-top: 10px;
+            margin-top: 10px;
+            font-weight: 700;
+            font-size: 1.1em;
+        }
+
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid #f44336;
+            display: none;
+        }
+
+        .error.show {
+            display: block;
+        }
+
+        .tab-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .tab-btn {
+            padding: 10px 20px;
+            background: #e0e0e0;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .tab-btn.active {
+            background: #667eea;
+            color: white;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        @media (max-width: 600px) {
+            .row {
+                grid-template-columns: 1fr;
+            }
+
+            header h1 {
+                font-size: 1.8em;
+            }
+
+            .card {
+                padding: 20px;
+            }
+
+            .button-group {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>💰 Paratapay</h1>
+            <p>Smart Expense Split Calculator</p>
+        </header>
+
+        <div class="card">
+            <div class="error" id="errorMsg"></div>
+
+            <div class="tab-buttons">
+                <button class="tab-btn active" onclick="switchTab('equal')">Equal Split</button>
+                <button class="tab-btn" onclick="switchTab('custom')">Custom Split</button>
+            </div>
+
+            <!-- EQUAL SPLIT TAB -->
+            <div id="equal" class="tab-content active">
+                <div class="form-section">
+                    <h2>Equal Split Mode</h2>
+                    <div class="form-group">
+                        <label>Total Expense Amount (₹)</label>
+                        <input type="number" id="totalAmount" placeholder="e.g., 900" min="0" step="0.01">
+                    </div>
+
+                    <h3 style="margin-top: 25px; color: #555; font-size: 1.1em;">Payers</h3>
+                    <div id="payersContainer"></div>
+                    <button class="btn-add" onclick="addPayer()">+ Add Payer</button>
+
+                    <h3 style="margin-top: 25px; color: #555; font-size: 1.1em;">Group Members</h3>
+                    <div id="membersContainer"></div>
+                    <button class="btn-add" onclick="addMember()">+ Add Member</button>
+
+                    <div class="button-group" style="margin-top: 30px;">
+                        <button class="btn-primary" onclick="calculateEqualSplit()">Calculate Split</button>
+                        <button class="btn-secondary" onclick="resetForm()">Reset</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CUSTOM SPLIT TAB -->
+            <div id="custom" class="tab-content">
+                <div class="form-section">
+                    <h2>Custom Split Mode</h2>
+                    <div class="form-group">
+                        <label>Total Expense Amount (₹)</label>
+                        <input type="number" id="customTotalAmount" placeholder="e.g., 1000" min="0" step="0.01">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Payer</label>
+                        <input type="text" id="customPayer" placeholder="e.g., A">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Amount Paid by Payer (₹)</label>
+                        <input type="number" id="customPayerAmount" placeholder="e.g., 1000" min="0" step="0.01">
+                    </div>
+
+                    <h3 style="margin-top: 25px; color: #555; font-size: 1.1em;">Custom Distribution</h3>
+                    <div class="form-group">
+                        <label>
+                            <input type="radio" name="customType" value="exact" checked> Exact Amounts
+                        </label>
+                        <label>
+                            <input type="radio" name="customType" value="percentage"> Percentages
+                        </label>
+                    </div>
+
+                    <div id="customItemsContainer"></div>
+                    <button class="btn-add" onclick="addCustomItem()">+ Add Distribution Item</button>
+
+                    <div class="button-group" style="margin-top: 30px;">
+                        <button class="btn-primary" onclick="calculateCustomSplit()">Calculate Split</button>
+                        <button class="btn-secondary" onclick="resetCustomForm()">Reset</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RESULTS -->
+            <div class="results" id="results">
+                <div class="form-section">
+                    <h2>📊 Results</h2>
+
+                    <div class="result-section">
+                        <h3>Share Records (What each person owes)</h3>
+                        <div id="sharesResult"></div>
+                    </div>
+
+                    <div class="result-section">
+                        <h3>Balance Changes (Net amount per person)</h3>
+                        <div id="balancesResult"></div>
+                    </div>
+
+                    <div class="result-section">
+                        <h3>Settlement Instructions</h3>
+                        <div id="settlementResult"></div>
+                    </div>
+
+                    <div class="summary">
+                        <div class="summary-row">
+                            <span>Total Expense:</span>
+                            <strong id="summaryTotal">₹0</strong>
+                        </div>
+                        <div class="summary-row">
+                            <span>Total Shares:</span>
+                            <strong id="summaryShares">₹0</strong>
+                        </div>
+                        <div class="summary-row">
+                            <span>Net Balance:</span>
+                            <strong id="summaryNet">₹0</strong>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize
+        function init() {
+            addPayer();
+            addPayer();
+            addMember();
+            addMember();
+            addMember();
+            addCustomItem();
+            addCustomItem();
+            addCustomItem();
+        }
+
+        // Tab switching
+        function switchTab(tab) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+            document.getElementById(tab).classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        // Add/Remove functions
+        function addPayer() {
+            const container = document.getElementById('payersContainer');
+            const id = Math.random().toString(36).substr(2, 9);
+            const html = `
+                <div class="payer-entry" id="payer-${id}">
+                    <input type="text" placeholder="Name (e.g., A)" class="payer-name" value="">
+                    <input type="number" placeholder="Amount paid (₹)" class="payer-amount" value="0" min="0" step="0.01">
+                    <button class="btn-remove" onclick="removePayer('${id}')">Remove</button>
+                </div>
+            `;
+            container.insertAdjacentHTML('beforeend', html);
+        }
+
+        function removePayer(id) {
+            document.getElementById('payer-' + id).remove();
+        }
+
+        function addMember() {
+            const container = document.getElementById('membersContainer');
+            const id = Math.random().toString(36).substr(2, 9);
+            const html = `
+                <div class="payer-entry" id="member-${id}">
+                    <input type="text" placeholder="Name (e.g., A)" class="member-name" value="">
+                    <button class="btn-remove" onclick="removeMember('${id}')">Remove</button>
+                </div>
+            `;
+            container.insertAdjacentHTML('beforeend', html);
+        }
+
+        function removeMember(id) {
+            document.getElementById('member-' + id).remove();
+        }
+
+        function addCustomItem() {
+            const container = document.getElementById('customItemsContainer');
+            const id = Math.random().toString(36).substr(2, 9);
+            const isPercentage = document.querySelector('input[name="customType"]:checked').value === 'percentage';
+            const placeholder = isPercentage ? 'Percentage (e.g., 60)' : 'Amount (₹)';
+            const label = isPercentage ? 'Percentage' : 'Amount';
+            
+            const html = `
+                <div class="payer-entry" id="custom-item-${id}">
+                    <input type="text" placeholder="Name (e.g., A)" class="custom-name" value="">
+                    <input type="number" placeholder="${placeholder}" class="custom-value" value="0" min="0" step="0.01">
+                    <small style="color: #666;">Person: <span class="custom-name-display">-</span> | ${label}: <span class="custom-value-display">0</span></small>
+                    <button class="btn-remove" onclick="removeCustomItem('${id}')">Remove</button>
+                </div>
+            `;
+            container.insertAdjacentHTML('beforeend', html);
+        }
+
+        function removeCustomItem(id) {
+            document.getElementById('custom-item-' + id).remove();
+        }
+
+        // Calculate functions
+        function calculateEqualSplit() {
+            try {
+                clearError();
+                const totalAmount = parseFloat(document.getElementById('totalAmount').value);
+                
+                if (!totalAmount || totalAmount <= 0) {
+                    showError('Please enter a valid total amount');
+                    return;
+                }
+
+                const payers = [];
+                document.querySelectorAll('#payersContainer .payer-entry').forEach(entry => {
+                    const name = entry.querySelector('.payer-name').value.trim();
+                    const amount = parseFloat(entry.querySelector('.payer-amount').value) || 0;
+                    if (name) payers.push({ name, amount });
+                });
+
+                const members = [];
+                document.querySelectorAll('#membersContainer .payer-entry').forEach(entry => {
+                    const name = entry.querySelector('.member-name').value.trim();
+                    if (name) members.push(name);
+                });
+
+                if (payers.length === 0) {
+                    showError('Please add at least one payer');
+                    return;
+                }
+
+                if (members.length === 0) {
+                    showError('Please add at least one group member');
+                    return;
+                }
+
+                // Verify total paid equals amount
+                const totalPaid = payers.reduce((sum, p) => sum + p.amount, 0);
+                if (Math.abs(totalPaid - totalAmount) > 0.01) {
+                    showError(`Total paid (₹${totalPaid}) must equal total amount (₹${totalAmount})`);
+                    return;
+                }
+
+                // Calculate shares
+                const sharePerPerson = totalAmount / members.length;
+                const shares = {};
+                const balances = {};
+
+                // Initialize balances with payer amounts
+                payers.forEach(p => {
+                    balances[p.name] = p.amount;
+                });
+
+                // Calculate shares and adjust balances
+                members.forEach(member => {
+                    shares[member] = sharePerPerson;
+                    if (!balances[member]) {
+                        balances[member] = 0;
+                    }
+                    balances[member] -= sharePerPerson;
+                });
+
+                displayResults(totalAmount, shares, balances);
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+
+        function calculateCustomSplit() {
+            try {
+                clearError();
+                const totalAmount = parseFloat(document.getElementById('customTotalAmount').value);
+                const payer = document.getElementById('customPayer').value.trim();
+                const payerAmount = parseFloat(document.getElementById('customPayerAmount').value) || 0;
+                const customType = document.querySelector('input[name="customType"]:checked').value;
+
+                if (!totalAmount || totalAmount <= 0) {
+                    showError('Please enter a valid total amount');
+                    return;
+                }
+
+                if (!payer) {
+                    showError('Please enter payer name');
+                    return;
+                }
+
+                if (payerAmount <= 0) {
+                    showError('Please enter valid payer amount');
+                    return;
+                }
+
+                const items = [];
+                document.querySelectorAll('#customItemsContainer .payer-entry').forEach(entry => {
+                    const name = entry.querySelector('.custom-name').value.trim();
+                    const value = parseFloat(entry.querySelector('.custom-value').value) || 0;
+                    if (name) items.push({ name, value });
+                });
+
+                if (items.length === 0) {
+                    showError('Please add at least one distribution item');
+                    return;
+                }
+
+                const shares = {};
+                const balances = { [payer]: payerAmount };
+
+                if (customType === 'percentage') {
+                    const totalPercentage = items.reduce((sum, item) => sum + item.value, 0);
+                    if (Math.abs(totalPercentage - 100) > 0.01) {
+                        showError(`Total percentage (${totalPercentage}%) must equal 100%`);
+                        return;
+                    }
+
+                    items.forEach(item => {
+                        const amount = (totalAmount * item.value) / 100;
+                        shares[item.name] = amount;
+                        balances[item.name] = (balances[item.name] || 0) - amount;
+                    });
+                } else {
+                    const totalAmount2 = items.reduce((sum, item) => sum + item.value, 0);
+                    if (Math.abs(totalAmount2 - totalAmount) > 0.01) {
+                        showError(`Total amounts (₹${totalAmount2}) must equal total (₹${totalAmount})`);
+                        return;
+                    }
+
+                    items.forEach(item => {
+                        shares[item.name] = item.value;
+                        balances[item.name] = (balances[item.name] || 0) - item.value;
+                    });
+                }
+
+                displayResults(totalAmount, shares, balances);
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+
+        function displayResults(totalAmount, shares, balances) {
+            // Display shares
+            let sharesHtml = '';
+            Object.entries(shares).forEach(([name, amount]) => {
+                sharesHtml += `<div class="share-card"><span class="share-name">${name}</span><span class="share-amount">₹${amount.toFixed(2)}</span></div>`;
+            });
+            document.getElementById('sharesResult').innerHTML = sharesHtml;
+
+            // Display balances
+            let balancesHtml = '';
+            Object.entries(balances).forEach(([name, amount]) => {
+                const isPositive = amount > 0;
+                const className = isPositive ? 'positive' : 'negative';
+                const sign = isPositive ? '+' : '';
+                const statusClass = isPositive ? 'amount-positive' : 'amount-negative';
+                balancesHtml += `<div class="share-card ${className}"><span class="share-name">${name}</span><span class="share-amount ${statusClass}">${sign}₹${Math.abs(amount).toFixed(2)}</span></div>`;
+            });
+            document.getElementById('balancesResult').innerHTML = balancesHtml;
+
+            // Display settlements
+            const debtors = Object.entries(balances).filter(([_, b]) => b < 0);
+            const creditors = Object.entries(balances).filter(([_, b]) => b > 0);
+            
+            let settlementHtml = '<p style="margin-bottom: 15px; color: #555;">People who need to pay back:</p>';
+            debtors.forEach(([name, amount]) => {
+                settlementHtml += `<div class="settlement-card"><strong>${name}</strong> owes <strong>₹${Math.abs(amount).toFixed(2)}</strong></div>`;
+            });
+
+            if (debtors.length === 0) {
+                settlementHtml = '<div class="settlement-card"><strong style="color: #4caf50;">✓ Everyone is settled!</strong></div>';
+            }
+
+            document.getElementById('settlementResult').innerHTML = settlementHtml;
+
+            // Display summary
+            const totalShares = Object.values(shares).reduce((a, b) => a + b, 0);
+            const totalNet = Object.values(balances).reduce((a, b) => a + b, 0);
+
+            document.getElementById('summaryTotal').textContent = `₹${totalAmount.toFixed(2)}`;
+            document.getElementById('summaryShares').textContent = `₹${totalShares.toFixed(2)}`;
+            document.getElementById('summaryNet').textContent = `₹${totalNet.toFixed(2)}`;
+
+            document.getElementById('results').classList.add('show');
+            document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function resetForm() {
+            document.getElementById('totalAmount').value = '';
+            document.getElementById('payersContainer').innerHTML = '';
+            document.getElementById('membersContainer').innerHTML = '';
+            document.getElementById('results').classList.remove('show');
+            addPayer();
+            addPayer();
+            addMember();
+            addMember();
+            addMember();
+        }
+
+        function resetCustomForm() {
+            document.getElementById('customTotalAmount').value = '';
+            document.getElementById('customPayer').value = '';
+            document.getElementById('customPayerAmount').value = '';
+            document.getElementById('customItemsContainer').innerHTML = '';
+            document.getElementById('results').classList.remove('show');
+            addCustomItem();
+            addCustomItem();
+            addCustomItem();
+        }
+
+        function showError(msg) {
+            const el = document.getElementById('errorMsg');
+            el.textContent = msg;
+            el.classList.add('show');
+        }
+
+        function clearError() {
+            document.getElementById('errorMsg').classList.remove('show');
+        }
+
+        // Initialize on page load
+        window.addEventListener('load', init);
+    </script>
+</body>
+</html>
