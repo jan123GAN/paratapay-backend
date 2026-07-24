@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { errorResponse, successResponse } from "@/utils/response";
+import { errorResponse, successResponse } from "@/utils/response.js";
 
 export const healthCheck = async (req: Request, res: Response) => {
   try {
