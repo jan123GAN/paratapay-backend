@@ -4,8 +4,8 @@ import { PrismaClient } from "@prisma/client";
 interface AuthenticatedRequest extends Request {
   user?: { userId: string; email: string; displayName: string };
 }
-import { successResponse, errorResponse } from "../../utils/response";
-import { createExpenseSchema, createSettlementSchema } from "../../validators/expense.validator";
+import { successResponse, errorResponse } from "../../utils/response.js";
+import { createExpenseSchema, createSettlementSchema } from "../../validators/expense.validator.js";
 import { createExpenseWithBalances, createSettlementWithBalances, deleteExpenseWithBalances, simplifyDebts, updateExpenseWithBalances } from "../../services/expense.service";
 
 const prisma = new PrismaClient();
