@@ -1,4 +1,4 @@
-import 'module-alias/register'; // Sabse pehli line honi chahiye
+import "module-alias/register.js"; // Sabse pehli line honi chahiye
 import app from "./app.js";
 import dotenv from "dotenv";
 dotenv.config();
