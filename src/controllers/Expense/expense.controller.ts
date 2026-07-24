@@ -6,7 +6,7 @@ interface AuthenticatedRequest extends Request {
 }
 import { successResponse, errorResponse } from "../../utils/response.js";
 import { createExpenseSchema, createSettlementSchema } from "../../validators/expense.validator.js";
-import { createExpenseWithBalances, createSettlementWithBalances, deleteExpenseWithBalances, simplifyDebts, updateExpenseWithBalances } from "../../services/expense.service";
+import { createExpenseWithBalances, createSettlementWithBalances, deleteExpenseWithBalances, simplifyDebts, updateExpenseWithBalances } from "../../services/expense.service.js";
 
 const prisma = new PrismaClient();
 
