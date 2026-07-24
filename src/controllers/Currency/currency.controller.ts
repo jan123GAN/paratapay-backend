@@ -1,7 +1,7 @@
 import { PrismaClient } from "@prisma/client"
 import { Request, Response } from "express"
-import { currency } from "../../validators/currency.validator";
-import { successResponse, errorResponse } from "../../utils/response";
+import { currency } from "../../validators/currency.validator.js";
+import { successResponse, errorResponse } from "../../utils/response.js";
 
 
 const prisma = new PrismaClient();
