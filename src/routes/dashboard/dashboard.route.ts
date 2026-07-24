@@ -5,8 +5,8 @@ import {
   getActiveGroups,
   getMonthlySpending,
   getSettlements
-} from "../../controllers/dashboard/dashboard.controller";
-import { authenticateToken } from "../../middlewares/jwt.middlewares";
+} from "../../controllers/dashboard/dashboard.controller.js";
+import { authenticateToken } from "../../middlewares/jwt.middlewares.js";
 
 const router = Router();
 

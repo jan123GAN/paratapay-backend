@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createExpense, createSettlement, getExpense, getAllExpenses, deleteExpense, getSimplifiedDebts, updateExpense } from "../../controllers/Expense/expense.controller";
+import { createExpense, createSettlement, getExpense, getAllExpenses, deleteExpense, getSimplifiedDebts, updateExpense } from "../../controllers/Expense/expense.controller.js";
 import { authenticateToken } from "../../middlewares/jwt.middlewares.js";
 const router = Router();
 
