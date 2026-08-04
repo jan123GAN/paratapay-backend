@@ -349,11 +349,7 @@ export const recalculateGroupBalances = async (groupId: string, client: PrismaCl
 
     const expenses = await tx.expenses.findMany({ where: { group_id: groupId } });
     const expensePayments = await tx.expense_payments.findMany({ where: { expense: { group_id: groupId } } });
-    // FIX: was `expenseId: { group_id: groupId }` — `expenseId` is the scalar FK column, not the
-    // relation field, so Prisma threw "Unknown argument expenseId" and this function never completed.
-    // The relation field on expense_splits is `expense` (matches the query above for expense_payments).
-    const expenseSplits = await tx.expense_splits.findMany({ where: { expense: { group_id: groupId } } });
-    // FIX: settlements were never fetched or applied here — see buildGroupBalanceMap comment above.
+    const expenseSplits = await tx.expense_splits.findMany({ where: { expenseId: { group_id: groupId } } });
     const settlements = await tx.settlements.findMany({ where: { group_id: groupId } });
 
     const balanceMap = buildGroupBalanceMap({ expenses, expensePayments, expenseSplits, settlements });
