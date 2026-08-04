@@ -131,6 +131,8 @@ model expenses {
   expense_date    DateTime
   split_type      splitType          @default(EQUAL_SPLIT)
   currency_code   String
+
+  isSettled     Boolean @default(false)  
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
   expensePayments expense_payments[] @relation("expensePayments")
@@ -198,7 +200,7 @@ enum ReportType {
 }
 
 enum SettlementStatus {
-  SUCUSS
+  SUCCESS
   IN_PROGRESS
   FAILED
 }

@@ -79,6 +79,7 @@ export const createSettlementSchema = z.object({
   amount: z.number().positive("Amount must be a positive number"),
   currency_code: z.string().min(1, "Currency code is required"),
   method: z.nativeEnum(PaymentMethod).default(PaymentMethod.ONLINE),
+  expense_id: z.string().optional(),
 }).superRefine((data, ctx) => {
   if (data.from_user_id === data.to_user_id) {
     ctx.addIssue({

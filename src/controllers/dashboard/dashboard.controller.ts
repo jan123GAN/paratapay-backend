@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { PrismaClient, Prisma } from "@prisma/client";
 import { successResponse, errorResponse } from "../../utils/response.js";
+import { simplifyDebts } from "../../services/expense.service.js";
 
 const prisma = new PrismaClient();
 
@@ -9,6 +10,7 @@ export const getDashboardStats = async (req: Request, res: Response) => {
   const { user_id } = req.params;
 
   try {
+    // 1. Total Expenses Calculate karo (Jaise pehle tha)
     const expenses = await prisma.expenses.findMany({
       where: {
         OR: [
@@ -18,61 +20,45 @@ export const getDashboardStats = async (req: Request, res: Response) => {
           { splitExpense: { some: { OR: [{ user_id }, { own_by: user_id }] } } },
         ],
       },
-      include: {
-        expensePayments: {
-          select: {
-            user_id: true,
-            amount_paid: true,
-          },
-        },
-        splitExpense: {
-          select: {
-            user_id: true,
-            own_by: true,
-            exact_amount: true,
-          },
-        },
-        paid: {
-          select: {
-            id: true,
-          },
-        },
-      },
+      select: { amount: true }
     });
 
-    const totalExpenses = expenses.reduce((sum, expense) =>
-      sum.plus(new Prisma.Decimal(expense.amount)),
+    const totalExpenses = expenses.reduce(
+      (sum, expense) => sum.plus(new Prisma.Decimal(expense.amount)),
       new Prisma.Decimal(0)
     );
 
-    let totalOwed = new Prisma.Decimal(0);
-    let totalOwedToUser = new Prisma.Decimal(0);
-
-    expenses.forEach((expense) => {
-      const creditorUserId = expense.paid?.id ?? expense.paid_by;
-
-      expense.splitExpense.forEach((split) => {
-        const debtorUserId = split.user_id;
-        const splitAmount = new Prisma.Decimal(split.exact_amount);
-
-        if (!splitAmount.isZero() && debtorUserId === user_id && creditorUserId && creditorUserId !== user_id) {
-          totalOwed = totalOwed.plus(splitAmount);
-        }
-
-        if (!splitAmount.isZero() && creditorUserId === user_id && debtorUserId && debtorUserId !== user_id) {
-          totalOwedToUser = totalOwedToUser.plus(splitAmount);
-        }
-      });
-    });
-
-    totalOwed = totalOwed.isNegative() ? new Prisma.Decimal(0) : totalOwed;
-    totalOwedToUser = totalOwedToUser.isNegative() ? new Prisma.Decimal(0) : totalOwedToUser;
-
-    // Get active groups count
-    const activeGroups = await prisma.group_members.count({
+    // 2. Active group memberships — reused below both to scope the balances query and to count groups.
+    // FIX: previously the balances query below had no scoping at all, so a group the user had left, or
+    // one that was soft-deleted, would still contribute its (stale) balance to the dashboard totals.
+    const activeMemberships = await prisma.group_members.findMany({
       where: {
         user_id,
-        isInGroup: true
+        isInGroup: true,
+        group: { isDeleted: false },
+      },
+      select: { group_id: true },
+    });
+    const activeGroupIds = activeMemberships.map((m) => m.group_id);
+
+    // 3. Net Owed & Owed To You directly Balances table se le aao (Jahan settlements already accounted hain!)
+    // FIX: scoped to active, non-deleted groups only — see comment above.
+    const userBalances = activeGroupIds.length
+      ? await prisma.balances.findMany({
+          where: { user_id, group_id: { in: activeGroupIds } },
+          select: { balance: true }
+        })
+      : [];
+
+    let totalOwed = new Prisma.Decimal(0);       // Kitna dena baki hai (Negative balance sum)
+    let totalOwedToUser = new Prisma.Decimal(0); // Kitna milna baki hai (Positive balance sum)
+
+    userBalances.forEach((b) => {
+      const bal = new Prisma.Decimal(b.balance);
+      if (bal.isNegative()) {
+        totalOwed = totalOwed.plus(bal.abs());
+      } else if (bal.isPositive()) {
+        totalOwedToUser = totalOwedToUser.plus(bal);
       }
     });
 
@@ -80,7 +66,7 @@ export const getDashboardStats = async (req: Request, res: Response) => {
       totalExpenses: totalExpenses.toString(),
       youOwe: totalOwed.toString(),
       owedToYou: totalOwedToUser.toString(),
-      activeGroups
+      activeGroups: activeGroupIds.length
     };
 
     return res.status(200).json(successResponse("Dashboard stats fetched successfully", stats));
@@ -162,6 +148,10 @@ export const getActiveGroups = async (req: Request, res: Response) => {
 
     const groupsWithStats = await Promise.all(
       activeGroups.map(async (membership) => {
+        // NOTE: still uses findFirst — if a group has expenses in more than one currency, this
+        // silently returns only one of them. Flagging as-is since fixing it changes the response
+        // shape (single balance -> per-currency balances); left for a follow-up if the app is
+        // actually multi-currency-per-group.
         const balance = await prisma.balances.findFirst({
           where: {
             group_id: membership.group_id,
@@ -198,9 +188,15 @@ export const getMonthlySpending = async (req: Request, res: Response) => {
   try {
     const expenses = await prisma.expenses.findMany({
       where: {
+        // FIX: every other dashboard query (stats, recent expenses) treats a user as "involved" if
+        // they created it, paid it, or are a payment/split participant. This one only checked
+        // created_by/paid_by, so a pure split-participant's spending never showed up here — spending
+        // trend could disagree with the totals shown elsewhere on the same dashboard.
         OR: [
           { created_by: user_id },
-          { paid_by: user_id }
+          { paid_by: user_id },
+          { expensePayments: { some: { user_id } } },
+          { splitExpense: { some: { OR: [{ user_id }, { own_by: user_id }] } } },
         ],
         expense_date: {
           gte: new Date(new Date().setMonth(new Date().getMonth() - 6))
@@ -215,103 +211,29 @@ export const getMonthlySpending = async (req: Request, res: Response) => {
       }
     });
 
-    const monthlySpending = expenses.reduce((acc: any, expense) => {
-      const month = expense.expense_date.toLocaleString('default', { month: 'short' });
-      if (!acc[month]) {
-        acc[month] = new Prisma.Decimal(0);
+    // FIX: was keyed by short month name only ("Jan"), so if the 6-month window spans a year
+    // boundary, two different years' "Jan" get merged into one bucket. Key now includes the year;
+    // `label` keeps the short display name for the UI.
+    const monthlySpending = expenses.reduce((acc: Record<string, { label: string; total: Prisma.Decimal }>, expense) => {
+      const key = `${expense.expense_date.getFullYear()}-${String(expense.expense_date.getMonth() + 1).padStart(2, "0")}`;
+      const label = expense.expense_date.toLocaleString('default', { month: 'short' });
+      if (!acc[key]) {
+        acc[key] = { label, total: new Prisma.Decimal(0) };
       }
-      acc[month] = acc[month].plus(expense.amount);
+      acc[key].total = acc[key].total.plus(expense.amount);
       return acc;
     }, {});
 
-    return res.status(200).json(successResponse("Monthly spending fetched successfully", monthlySpending));
+    const formattedSpending = Object.fromEntries(
+      Object.entries(monthlySpending).map(([key, value]) => [key, { label: value.label, total: value.total.toString() }])
+    );
+
+    return res.status(200).json(successResponse("Monthly spending fetched successfully", formattedSpending));
   } catch (error: any) {
     console.error("Error fetching monthly spending:", error);
     return res.status(500).json(errorResponse("Failed to fetch monthly spending", error.message));
   }
 };
-
-// export const getSettlements = async (req: Request, res: Response) => {
-//   const { group_id } = req.params;
-
-//   try {
-//     const balances = await prisma.balances.findMany({
-//       where: { group_id },
-//       include: {
-//         userBalances: {
-//           select: { displayName: true, avatarUrl: true },
-//         },
-//       },
-//     });
-
-//     if (balances.length === 0) {
-//       return res.status(404).json(errorResponse("No balances found for this group"));
-//     }
-
-//     // separate
-//     let debtors = balances
-//       .filter((b) => new Prisma.Decimal(b.balance).isNegative())
-//       .map((b) => ({
-//         user_id: b.user_id,
-//         balance: new Prisma.Decimal(b.balance),
-//         userInfo: b.userBalances,
-//       }));
-
-//     let creditors = balances
-//       .filter((b) => new Prisma.Decimal(b.balance).isPositive())
-//       .map((b) => ({
-//         user_id: b.user_id,
-//         balance: new Prisma.Decimal(b.balance),
-//         userInfo: b.userBalances,
-//       }));
-
-//     const settlements: any[] = [];
-//     let i = 0,
-//       j = 0;
-
-//     while (i < debtors.length && j < creditors.length) {
-//       const debtor = debtors[i];
-//       const creditor = creditors[j];
-
-//       const settleAmount = Prisma.Decimal.min(
-//         debtor.balance.abs(),
-//         creditor.balance
-//       );
-
-//       if (settleAmount.isPositive()) {
-//         settlements.push({
-//           from: {
-//             id: debtor.user_id,
-//             name: debtor.userInfo?.displayName || "Unknown",
-//             avatar: debtor.userInfo?.avatarUrl || "",
-//           },
-//           to: {
-//             id: creditor.user_id,
-//             name: creditor.userInfo?.displayName || "Unknown",
-//             avatar: creditor.userInfo?.avatarUrl || "",
-//           },
-//           amount: settleAmount.toString(),
-//         });
-
-//         debtor.balance = debtor.balance.plus(settleAmount);
-//         creditor.balance = creditor.balance.minus(settleAmount);
-//       }
-
-//       if (debtor.balance.isZero() || debtor.balance.isPositive()) i++;
-//       if (creditor.balance.isZero() || creditor.balance.isNegative()) j++;
-//     }
-
-//     return res
-//       .status(200)
-//       .json(successResponse("Settlements calculated successfully", settlements));
-//   } catch (error: any) {
-//     console.error("Error calculating settlements:", error);
-//     return res
-//       .status(500)
-//       .json(errorResponse("Internal server error", error.message));
-//   }
-// };
-
 
 export const getSettlements = async (req: Request, res: Response) => {
   const { group_id } = req.params;
@@ -328,27 +250,8 @@ export const getSettlements = async (req: Request, res: Response) => {
       return res.status(404).json(errorResponse("No members found for this group"));
     }
 
-    const expenses = await prisma.expenses.findMany({
-      where: { group_id },
-      include: {
-        splitExpense: {
-          select: {
-            user_id: true,
-            exact_amount: true,
-          },
-        },
-      },
-    });
-
-    if (expenses.length === 0) {
-      return res.status(200).json(successResponse("No expenses found", []));
-    }
-
-    const balances: Record<string, Prisma.Decimal> = {};
     const memberMeta: Record<string, { id: string; name: string; avatar: string | null }> = {};
-
     members.forEach((member) => {
-      balances[member.user.id] = new Prisma.Decimal(0);
       memberMeta[member.user.id] = {
         id: member.user.id,
         name: member.user.displayName,
@@ -356,75 +259,49 @@ export const getSettlements = async (req: Request, res: Response) => {
       };
     });
 
-    expenses.forEach((expense) => {
-      const splitRows = expense.splitExpense ?? [];
-      const totalSplitAmount = splitRows.reduce(
-        (sum, split) => sum.plus(new Prisma.Decimal(split.exact_amount)),
-        new Prisma.Decimal(0)
-      );
-
-      members.forEach((member) => {
-        const memberId = member.user.id;
-        const isCreditor = expense.paid_by === memberId;
-
-        if (isCreditor) {
-          balances[memberId] = balances[memberId].plus(totalSplitAmount);
-        }
-
-        const memberSplit = splitRows.find((split) => split.user_id === memberId);
-        if (memberSplit) {
-          balances[memberId] = balances[memberId].minus(new Prisma.Decimal(memberSplit.exact_amount));
-        }
-      });
+    // FIX (main bug): this used to recompute debts from scratch by summing raw expense_payments and
+    // expense_splits for expenses where isSettled = false. That's a redundant, parallel source of
+    // truth that completely ignores the `settlements` table. A settlement recorded without an
+    // expense_id (a general "pay off what I owe" settlement, not tied to one specific expense) never
+    // flips any expense's isSettled flag — so the old code kept treating that debt as fully
+    // outstanding even after it had actually been paid off. This now reads from the `balances` table,
+    // which is the single source of truth already used by the rest of the dashboard and is kept in
+    // sync by createSettlementWithBalances / recalculateGroupBalances.
+    const balances = await prisma.balances.findMany({
+      where: {
+        group_id,
+        user_id: { in: members.map((member) => member.user.id) },
+      },
+      select: { user_id: true, currency_code: true, balance: true },
     });
 
-    const debtors = members
-      .filter((member) => balances[member.user.id].isNegative())
-      .map((member) => ({
-        user: memberMeta[member.user.id],
-        balance: balances[member.user.id],
-      }));
-
-    const creditors = members
-      .filter((member) => balances[member.user.id].isPositive())
-      .map((member) => ({
-        user: memberMeta[member.user.id],
-        balance: balances[member.user.id],
-      }));
+    // FIX: also currency-aware now. The old calculation summed amount_paid/exact_amount across all
+    // currencies into one number, which is wrong for any group with mixed-currency expenses. Debts
+    // are now simplified independently per currency.
+    const balancesByCurrency = new Map<string, Array<{ user_id: string; balance: Prisma.Decimal }>>();
+    balances.forEach((entry) => {
+      const list = balancesByCurrency.get(entry.currency_code) ?? [];
+      list.push({ user_id: entry.user_id, balance: new Prisma.Decimal(entry.balance) });
+      balancesByCurrency.set(entry.currency_code, list);
+    });
 
     const settlements: Array<{
       from: { id: string; name: string; avatar: string | null };
       to: { id: string; name: string; avatar: string | null };
       amount: string;
+      currency_code: string;
     }> = [];
 
-    let debtorIndex = 0;
-    let creditorIndex = 0;
-
-    while (debtorIndex < debtors.length && creditorIndex < creditors.length) {
-      const debtor = debtors[debtorIndex];
-      const creditor = creditors[creditorIndex];
-      const debtorBalanceAbs = debtor.balance.abs();
-      const settleAmount = debtorBalanceAbs.lessThan(creditor.balance) ? debtorBalanceAbs : creditor.balance;
-
-      if (settleAmount.isPositive()) {
+    for (const [currencyCode, entries] of balancesByCurrency.entries()) {
+      const transactions = simplifyDebts(entries);
+      transactions.forEach((transaction) => {
         settlements.push({
-          from: debtor.user,
-          to: creditor.user,
-          amount: settleAmount.toString(),
+          from: memberMeta[transaction.fromUserId],
+          to: memberMeta[transaction.toUserId],
+          amount: transaction.amount.toString(),
+          currency_code: currencyCode,
         });
-
-        debtor.balance = debtor.balance.plus(settleAmount);
-        creditor.balance = creditor.balance.minus(settleAmount);
-      }
-
-      if (debtor.balance.isZero() || debtor.balance.isPositive()) {
-        debtorIndex += 1;
-      }
-
-      if (creditor.balance.isZero() || creditor.balance.isNegative()) {
-        creditorIndex += 1;
-      }
+      });
     }
 
     return res.status(200).json(successResponse("Settlements calculated successfully", settlements));

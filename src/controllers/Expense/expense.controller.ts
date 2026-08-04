@@ -31,9 +31,13 @@ export const createSettlement = async (req: AuthenticatedRequest, res: Response)
     return res.status(400).json(errorResponse("Validation error", validationResult.error.issues));
   }
 
-  if (req.user?.userId && validationResult.data.from_user_id !== req.user.userId) {
-    return res.status(403).json(errorResponse("You are not authorized to settle for another user"));
-  }
+ if (!req.user?.userId) {
+  return res.status(401).json(errorResponse("Unauthorized: User session missing"));
+}
+
+if (validationResult.data.from_user_id !== req.user.userId) {
+  return res.status(403).json(errorResponse("You are not authorized to settle for another user"));
+}
 
   try {
     const settlement = await createSettlementWithBalances(validationResult.data);
@@ -174,15 +178,70 @@ export const getExpense = async (req: Request, res: Response) => {
   }
 };
 
-export const getAllExpenses = async (req: Request, res: Response) => {
+export const getAllExpenses = async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const currentUserId = req.user?.userId;
+
+    if (!currentUserId) {
+      return res.status(401).json(errorResponse("Unauthorized: User not found"));
+    }
+
+    // ✅ Filter lagaya hai taaki sirf logged-in user se juda expense hi mile
     const expenses = await prisma.expenses.findMany({
+      where: {
+        OR: [
+          { created_by: currentUserId },
+          { paid_by: currentUserId },
+          {
+            expensePayments: {
+              some: { user_id: currentUserId },
+            },
+          },
+          {
+            splitExpense: {
+              some: { user_id: currentUserId },
+            },
+          },
+        ],
+      },
       orderBy: { createdAt: "desc" },
+      include: {
+        paid: {
+          select: {
+            id: true,
+            displayName: true,
+            avatarUrl: true,
+          },
+        },
+        expensePayments: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                displayName: true,
+                avatarUrl: true,
+              },
+            },
+          },
+        },
+        splitExpense: {
+          include: {
+            splitUserId: {
+              select: {
+                id: true,
+                displayName: true,
+                avatarUrl: true,
+              },
+            },
+          },
+        },
+      },
     });
 
     return res.status(200).json(successResponse("Expenses fetched successfully", expenses));
-  } catch (error) {
-    return res.status(500).json(errorResponse("Internal server error"));
+  } catch (error: any) {
+    console.error("Error fetching user expenses:", error);
+    return res.status(500).json(errorResponse("Internal server error", error.message));
   }
 };
 

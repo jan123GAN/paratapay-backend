@@ -112,10 +112,9 @@ export const buildExpenseSplitPlan = ({
   amount,
   groupMembers,
   splitType,
-  payerUserId,
   expenseData = [],
 }: ExpenseSplitPlanInput): ExpenseSplitPlan => {
-  if (!amount || amount.isNegative()) {
+  if (!amount || amount.isNegative() || amount.isZero()) {
     throw new Error("Expense amount must be a positive number.");
   }
 
@@ -144,29 +143,19 @@ export const buildExpenseSplitPlan = ({
   if (splitType === "EQUAL_SPLIT") {
     const share = amount.div(groupMembers.length);
     const roundedShare = toTwoDecimalPlaces(share);
-    let remaining = amount;
+    let accumulated = decimal(0);
+
     const records = groupMembers.map((member, index) => {
       const isLast = index === groupMembers.length - 1;
-      const exactAmount = isLast ? remaining : roundedShare;
-      const roundedAmount = toTwoDecimalPlaces(exactAmount);
-      remaining = remaining.minus(roundedAmount);
+      const exactAmount = isLast ? amount.minus(accumulated) : roundedShare;
+      accumulated = accumulated.plus(exactAmount);
+
       return buildRecord(
         member.user_id,
-        roundedAmount,
-        amount.isZero() ? new Prisma.Decimal(0) : toTwoDecimalPlaces(roundedAmount.div(amount).mul(100))
+        exactAmount,
+        toTwoDecimalPlaces(exactAmount.div(amount).mul(100))
       );
     });
-
-    const total = records.reduce((sum, record) => sum.plus(record.amount), new Prisma.Decimal(0));
-    if (!total.equals(amount)) {
-      const lastRecord = records[records.length - 1];
-      if (lastRecord) {
-        const adjustment = amount.minus(total);
-        lastRecord.amount = lastRecord.amount.plus(adjustment);
-        lastRecord.percentage = toTwoDecimalPlaces(lastRecord.amount.div(amount).mul(100));
-        lastRecord.exact_amount = lastRecord.amount;
-      }
-    }
 
     return { records, payerAmount: amount };
   }
@@ -203,24 +192,20 @@ export const buildExpenseSplitPlan = ({
       throw new Error("Percentages must total exactly 100%.");
     }
 
-    const records = memberIds.map((userId) => {
+    let accumulated = decimal(0);
+    const records = memberIds.map((userId, index) => {
       const entry = providedEntries.find((item) => item.user_id === userId);
       const percentage = decimal(entry?.percentage ?? 0);
-      const amountForMember = amount.mul(percentage).div(100);
-      const roundedAmount = toTwoDecimalPlaces(amountForMember);
+      const isLast = index === memberIds.length - 1;
+
+      const roundedAmount = isLast
+        ? amount.minus(accumulated)
+        : toTwoDecimalPlaces(amount.mul(percentage).div(100));
+
+      accumulated = accumulated.plus(roundedAmount);
+
       return buildRecord(userId, roundedAmount, toTwoDecimalPlaces(percentage));
     });
-
-    const total = records.reduce((sum, record) => sum.plus(record.amount), new Prisma.Decimal(0));
-    if (!total.equals(amount)) {
-      const lastRecord = records[records.length - 1];
-      if (lastRecord) {
-        const adjustment = amount.minus(total);
-        lastRecord.amount = lastRecord.amount.plus(adjustment);
-        lastRecord.percentage = toTwoDecimalPlaces(lastRecord.amount.div(amount).mul(100));
-        lastRecord.exact_amount = lastRecord.amount;
-      }
-    }
 
     return { records, payerAmount: amount };
   }
@@ -232,12 +217,6 @@ export const buildExpenseSplitPlan = ({
       }
       if (entry.amount < 0) {
         throw new Error(`Exact split amount for user ${entry.user_id} cannot be negative.`);
-      }
-      if (entry.amount === 0) {
-        throw new Error(`Exact split amount for user ${entry.user_id} must be greater than zero.`);
-      }
-      if (decimal(entry.amount).greaterThan(amount)) {
-        throw new Error(`Exact split amount for user ${entry.user_id} cannot exceed the expense total.`);
       }
     }
 
@@ -252,7 +231,7 @@ export const buildExpenseSplitPlan = ({
       return buildRecord(
         userId,
         exactAmount,
-        amount.isZero() ? new Prisma.Decimal(0) : toTwoDecimalPlaces(exactAmount.div(amount).mul(100))
+        amount.isZero() ? decimal(0) : toTwoDecimalPlaces(exactAmount.div(amount).mul(100))
       );
     });
 
@@ -260,18 +239,6 @@ export const buildExpenseSplitPlan = ({
   }
 
   throw new Error("Unsupported split type.");
-};
-
-const buildBalanceEffectsMap = (entries: Array<{ user_id: string; amount: Prisma.Decimal }>, operation: "apply" | "reverse" = "apply") => {
-  const balanceEffects = new Map<string, Prisma.Decimal>();
-
-  for (const entry of entries) {
-    const currentBalance = balanceEffects.get(entry.user_id) ?? decimal(0);
-    const delta = operation === "reverse" ? currentBalance.minus(entry.amount) : currentBalance.plus(entry.amount);
-    balanceEffects.set(entry.user_id, delta);
-  }
-
-  return balanceEffects;
 };
 
 export const buildExpenseBalanceEffects = ({
@@ -323,10 +290,22 @@ export const buildGroupBalanceMap = ({
   expenses,
   expensePayments,
   expenseSplits,
+  settlements = [],
 }: {
   expenses: Array<{ id: string; group_id: string; currency_code: string }>;
   expensePayments: Array<{ expense_id: string; user_id: string; amount_paid: Prisma.Decimal | number }>;
   expenseSplits: Array<{ expense_id: string; user_id: string; amount: Prisma.Decimal | number }>;
+  // FIX (root cause of the dashboard showing a stale "pending" amount after everything was settled):
+  // this map used to be built ONLY from raw expense payments/splits. Any time recalculateGroupBalances
+  // ran, it wiped out the balances table and rebuilt it from that raw data alone — completely erasing
+  // the effect of every settlement that had ever been recorded. Settlements must be folded in here too.
+  settlements?: Array<{
+    from_user_id: string;
+    to_user_id: string;
+    amount: Prisma.Decimal | number;
+    currency_code: string;
+    status?: string;
+  }>;
 }) => {
   const balanceMap = new Map<string, Prisma.Decimal>();
 
@@ -347,6 +326,20 @@ export const buildGroupBalanceMap = ({
     }
   }
 
+  // A settlement mirrors what createSettlementWithBalances does live: from_user's balance moves up
+  // (their debt shrinks), to_user's balance moves down (less is owed to them). Only count settlements
+  // that actually succeeded — a failed/pending one shouldn't affect the ledger.
+  for (const settlement of settlements) {
+    if (settlement.status && settlement.status !== "SUCCESS") continue;
+
+    const amount = decimal(settlement.amount);
+    const fromKey = `${settlement.from_user_id}:${settlement.currency_code}`;
+    const toKey = `${settlement.to_user_id}:${settlement.currency_code}`;
+
+    balanceMap.set(fromKey, (balanceMap.get(fromKey) ?? decimal(0)).plus(amount));
+    balanceMap.set(toKey, (balanceMap.get(toKey) ?? decimal(0)).minus(amount));
+  }
+
   return balanceMap;
 };
 
@@ -356,9 +349,14 @@ export const recalculateGroupBalances = async (groupId: string, client: PrismaCl
 
     const expenses = await tx.expenses.findMany({ where: { group_id: groupId } });
     const expensePayments = await tx.expense_payments.findMany({ where: { expense: { group_id: groupId } } });
-    const expenseSplits = await tx.expense_splits.findMany({ where: { expenseId: { group_id: groupId } } });
+    // FIX: was `expenseId: { group_id: groupId }` — `expenseId` is the scalar FK column, not the
+    // relation field, so Prisma threw "Unknown argument expenseId" and this function never completed.
+    // The relation field on expense_splits is `expense` (matches the query above for expense_payments).
+    const expenseSplits = await tx.expense_splits.findMany({ where: { expense: { group_id: groupId } } });
+    // FIX: settlements were never fetched or applied here — see buildGroupBalanceMap comment above.
+    const settlements = await tx.settlements.findMany({ where: { group_id: groupId } });
 
-    const balanceMap = buildGroupBalanceMap({ expenses, expensePayments, expenseSplits });
+    const balanceMap = buildGroupBalanceMap({ expenses, expensePayments, expenseSplits, settlements });
 
     await Promise.all(
       Array.from(balanceMap.entries()).map(async ([key, balance]) => {
@@ -441,29 +439,33 @@ export const createExpenseWithBalances = async (input: CreateExpenseInput, clien
   const amountDecimal = decimal(input.amount);
   const normalizedSplitType = normalizeSplitType(input.split_type);
 
-  const groupMembers = await client.group_members.findMany({
-    where: { group_id: input.group_id, isInGroup: true },
-    select: { user_id: true },
-  });
-
-  if (!groupMembers.length) {
-    throw new Error("No active group members found for this group.");
-  }
-
   const payerEntries = normalizePayerEntries({
     amount: input.amount,
     paidBy: input.paid_by,
     paidByData: input.paid_by_data,
   });
 
-  const plan = buildExpenseSplitPlan({
-    amount: amountDecimal,
-    groupMembers,
-    splitType: normalizedSplitType,
-    expenseData: input.expense_data ?? [],
-  });
-
   return runInTransaction(client, async (tx) => {
+    // FIX: groupMembers used to be fetched with `client` *outside* runInTransaction, before the
+    // transaction started. That's a TOCTOU race: if membership changes between this fetch and the
+    // transaction actually running, the split plan is built against a stale member list. Now fetched
+    // with `tx`, inside the transaction, same as updateExpenseWithBalances already does correctly.
+    const groupMembers = await tx.group_members.findMany({
+      where: { group_id: input.group_id, isInGroup: true },
+      select: { user_id: true },
+    });
+
+    if (!groupMembers.length) {
+      throw new Error("No active group members found for this group.");
+    }
+
+    const plan = buildExpenseSplitPlan({
+      amount: amountDecimal,
+      groupMembers,
+      splitType: normalizedSplitType,
+      expenseData: input.expense_data ?? [],
+    });
+
     await validateExpenseLedgerInput(tx, input, payerEntries);
     const expense = await tx.expenses.create({
       data: {
@@ -605,6 +607,7 @@ export const deleteExpenseWithBalances = async (expenseId: string, client: Prism
     return true;
   });
 };
+
 export const createSettlementWithBalances = async (
   input: {
     group_id: string;
@@ -613,174 +616,139 @@ export const createSettlementWithBalances = async (
     amount: number;
     currency_code: string;
     method: string;
+    expense_id?: string;
   },
   client: PrismaClient | Prisma.TransactionClient = prisma
 ) => {
+  // FIX: settling a debt to yourself is nonsensical and would fire two parallel upserts against the
+  // exact same (user_id, group_id, currency_code) balance row inside one transaction.
+  if (input.from_user_id === input.to_user_id) {
+    throw new Error("A user cannot settle a debt with themselves.");
+  }
+
   const amountDecimal = decimal(input.amount);
+  if (!amountDecimal || amountDecimal.isNegative() || amountDecimal.isZero()) {
+    throw new Error("Settlement amount must be a positive number.");
+  }
 
   return runInTransaction(client, async (tx) => {
-    // Group validation
-    const group = await tx.groups.findUnique({
-      where: { id: input.group_id },
-      select: { id: true, isDeleted: true },
-    });
-
+    // FIX: unlike createExpenseWithBalances/updateExpenseWithBalances, this function previously did
+    // zero validation of group/currency/membership before mutating balances. Bringing it in line with
+    // validateExpenseLedgerInput's checks.
+    const group = await tx.groups.findUnique({ where: { id: input.group_id }, select: { id: true, isDeleted: true } });
     if (!group || group.isDeleted) {
       throw new Error("Group not found.");
     }
 
-    // Currency validation
-    const currency = await tx.currencies.findFirst({
+    const currency = await tx.currencies.findFirst({ where: { code: input.currency_code, isDeleted: false } });
+    if (!currency) {
+      throw new Error("Currency code not found.");
+    }
+
+    const activeMembers = await tx.group_members.findMany({
+      where: { group_id: input.group_id, isInGroup: true },
+      select: { user_id: true },
+    });
+    const memberIds = new Set(activeMembers.map((member) => member.user_id));
+
+    if (!memberIds.has(input.from_user_id)) {
+      throw new Error(`User ${input.from_user_id} is not a member of this group.`);
+    }
+    if (!memberIds.has(input.to_user_id)) {
+      throw new Error(`User ${input.to_user_id} is not a member of this group.`);
+    }
+
+    if (input.expense_id) {
+      const expense = await tx.expenses.findUnique({ where: { id: input.expense_id } });
+      if (!expense) {
+        throw new Error("Expense not found");
+      }
+      if (expense.group_id !== input.group_id)
+        throw new Error("Expense does not belong to this group");
+
+      if (expense.isSettled) {
+        throw new Error("Expense already settled");
+      }
+    }
+
+    const fromBalance = await tx.balances.findUnique({
       where: {
-        code: input.currency_code,
-        isDeleted: false,
+        user_id_group_id_currency_code: {
+          user_id: input.from_user_id,
+          group_id: input.group_id,
+          currency_code: input.currency_code,
+        },
       },
     });
 
-    if (!currency) {
-      throw new Error("Currency not found.");
+    const pendingAmount = fromBalance && new Prisma.Decimal(fromBalance.balance).isNegative()
+      ? new Prisma.Decimal(fromBalance.balance).abs()
+      : new Prisma.Decimal(0);
+
+    if (amountDecimal.greaterThan(pendingAmount)) {
+      throw new Error("Settlement amount exceeds pending balance");
     }
 
-    // User validation
-    const [fromUser, toUser] = await Promise.all([
-      tx.users.findUnique({
-        where: { id: input.from_user_id },
-        select: { id: true, isDeleted: true },
-      }),
-      tx.users.findUnique({
-        where: { id: input.to_user_id },
-        select: { id: true, isDeleted: true },
-      }),
-    ]);
-
-    if (!fromUser || fromUser.isDeleted) {
-      throw new Error("Sender not found.");
-    }
-
-    if (!toUser || toUser.isDeleted) {
-      throw new Error("Receiver not found.");
-    }
-
-    // Membership validation
-    const [fromMember, toMember] = await Promise.all([
-      tx.group_members.findFirst({
-        where: {
-          group_id: input.group_id,
-          user_id: input.from_user_id,
-          isInGroup: true,
-        },
-      }),
-      tx.group_members.findFirst({
-        where: {
-          group_id: input.group_id,
+    // FIX: previously only from_user's balance was checked. Nothing verified that to_user was
+    // actually owed anything, so a settlement could be recorded between two users who don't have a
+    // debt relationship with each other at all — global balances would still zero out, but the
+    // individual debt record would misrepresent who owes whom.
+    const toBalance = await tx.balances.findUnique({
+      where: {
+        user_id_group_id_currency_code: {
           user_id: input.to_user_id,
-          isInGroup: true,
+          group_id: input.group_id,
+          currency_code: input.currency_code,
         },
-      }),
-    ]);
+      },
+    });
 
-    if (!fromMember || !toMember) {
-      throw new Error("Both users must belong to the group.");
+    const owedToUser = toBalance && new Prisma.Decimal(toBalance.balance).isPositive()
+      ? new Prisma.Decimal(toBalance.balance)
+      : new Prisma.Decimal(0);
+
+    if (amountDecimal.greaterThan(owedToUser)) {
+      throw new Error("Settlement amount exceeds what is owed to the recipient");
     }
 
-    // Current balances
-    const [fromBalance, toBalance] = await Promise.all([
-      tx.balances.findUnique({
-        where: {
-          user_id_group_id_currency_code: {
-            user_id: input.from_user_id,
-            group_id: input.group_id,
-            currency_code: input.currency_code,
-          },
-        },
-      }),
-
-      tx.balances.findUnique({
-        where: {
-          user_id_group_id_currency_code: {
-            user_id: input.to_user_id,
-            group_id: input.group_id,
-            currency_code: input.currency_code,
-          },
-        },
-      }),
-    ]);
-
-    if (!fromBalance || !toBalance) {
-      throw new Error("Balance records not found.");
-    }
-
-    // Sender must be debtor
-    if (!fromBalance.balance.isNegative()) {
-      throw new Error("Sender has no pending debt.");
-    }
-
-    // Receiver must be creditor
-    if (!toBalance.balance.isPositive()) {
-      throw new Error("Receiver has no pending credit.");
-    }
-
-    // Settlement amount validation
-    const maxPossible = Prisma.Decimal.min(
-      fromBalance.balance.abs(),
-      toBalance.balance
-    );
-
-    if (amountDecimal.greaterThan(maxPossible)) {
-      throw new Error("Settlement amount exceeds pending balance.");
-    }
-
-    // Create settlement record
     const settlement = await tx.settlements.create({
       data: {
-        group_id: input.group_id,
+        amount: amountDecimal,
+        // FIX: was "SUCUSS" (typo) — any downstream code checking status === "SUCCESS" would never match.
+        status: "SUCCESS",
+        method: input.method as any,
+        settled_at: new Date(),
+        currency_code: input.currency_code,
         from_user_id: input.from_user_id,
         to_user_id: input.to_user_id,
-        amount: amountDecimal,
-        currency_code: input.currency_code,
-        method: input.method as any,
-        status: "SUCUSS", // your enum
-        settled_at: new Date(),
+        group_id: input.group_id,
       },
     });
 
-    // Debtor balance increases toward zero
-    await tx.balances.update({
-      where: {
-        user_id_group_id_currency_code: {
-          user_id: input.from_user_id,
-          group_id: input.group_id,
-          currency_code: input.currency_code,
-        },
-      },
-      data: {
-        balance: {
-          increment: amountDecimal,
-        },
-        last_update: new Date(),
-      },
-    });
+    await Promise.all([
+      tx.balances.upsert({
+        where: { user_id_group_id_currency_code: { user_id: input.from_user_id, group_id: input.group_id, currency_code: input.currency_code } },
+        update: { balance: { increment: amountDecimal }, last_update: new Date() },
+        create: { user_id: input.from_user_id, group_id: input.group_id, currency_code: input.currency_code, balance: amountDecimal, last_update: new Date() },
+      }),
+      tx.balances.upsert({
+        where: { user_id_group_id_currency_code: { user_id: input.to_user_id, group_id: input.group_id, currency_code: input.currency_code } },
+        update: { balance: { increment: amountDecimal.neg() }, last_update: new Date() },
+        create: { user_id: input.to_user_id, group_id: input.group_id, currency_code: input.currency_code, balance: amountDecimal.neg(), last_update: new Date() },
+      }),
+    ]);
 
-    // Creditor balance decreases toward zero
-    await tx.balances.update({
-      where: {
-        user_id_group_id_currency_code: {
-          user_id: input.to_user_id,
-          group_id: input.group_id,
-          currency_code: input.currency_code,
-        },
-      },
-      data: {
-        balance: {
-          decrement: amountDecimal,
-        },
-        last_update: new Date(),
-      },
-    });
+    if (input.expense_id) {
+      await tx.expenses.update({
+        where: { id: input.expense_id },
+        data: { isSettled: true },
+      });
+    }
 
     return settlement;
   });
 };
+
 export const simplifyDebts = (balances: BalanceEntry[]) => {
   const positive = balances.filter((entry) => entry.balance.greaterThan(0)).map((entry) => ({
     user_id: entry.user_id,
@@ -811,12 +779,8 @@ export const simplifyDebts = (balances: BalanceEntry[]) => {
     creditor.balance = creditor.balance.minus(amount);
     debtor.balance = debtor.balance.minus(amount);
 
-    if (creditor.balance.isZero()) {
-      positiveIndex += 1;
-    }
-    if (debtor.balance.isZero()) {
-      negativeIndex += 1;
-    }
+    if (creditor.balance.isZero()) positiveIndex += 1;
+    if (debtor.balance.isZero()) negativeIndex += 1;
   }
 
   return transactions;
